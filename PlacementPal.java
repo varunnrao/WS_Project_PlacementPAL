@@ -33,7 +33,7 @@ public class PlacementPal
 	
 /*
  * TODO : 
- * - Fix get_all by re-building the structure as per API documentation, after calling get_gd and get_fc
+ * - Fix get_all by re-building the structure as per API documentation, after calling get_gd and get_fc - DONE
  * - Error Checking for both get_gd and get_fc; Add another 'status' field to the JsonObject that is being returned.
  * 			-> GlassDoor does not clearly indicate a 400; A pseudo-indicator is 'totalRecordCount' field of the 'response' field being equal to 0
  * 			-> "status" is 404 in case of FullContact
@@ -42,20 +42,28 @@ public class PlacementPal
  * - Test each endpoint; Some might throw exceptions now due to the code re-factoring
  * */	
 	
-/*	
- * Need to call get_gd and get_fc to build the final get_all structure 
- * 
- * 
+
 	@GET
 	@Path("/get/all/{companyName: [a-zA-Z]+}")
 	@Produces(MediaType.APPLICATION_JSON)
 	public Response getAllJSON(@PathParam("companyName") String companyName)
 	{
 		
-		populate(companyName)	;
+		//populate(companyName)	;
+		
+		JsonObject gd = get_gd(companyName);
+		JsonObject fc = get_fc(companyName);
+		JsonObject finalStruct = Json.createObjectBuilder()
+				.add("organization", fc.getJsonObject("organization"))
+				.add("website", fc.getJsonString("website"))
+				.add("socialProfiles", fc.getJsonArray("socialProfiles"))
+				.add("ratings", gd.getJsonObject("ratings"))
+				.add("featuredReview", gd.getJsonObject("featuredReview"))
+				.add("ceo",gd.getJsonObject("ceo"))
+			.build();
 		return Response.ok(finalStruct.toString(),MediaType.APPLICATION_JSON).build();
 	}
-*/	
+	
 	
 	@GET
 	@Path("/get/ratings/{companyName: [a-zA-Z]+}")
@@ -64,7 +72,7 @@ public class PlacementPal
 	{
 		JsonObject fs = get_gd(companyName)	;	
 		//System.out.println(fs);
-		return Response.ok(fs.toString(),MediaType.APPLICATION_JSON).build();
+		return Response.ok(fs.getJsonObject("ratings").toString(),MediaType.APPLICATION_JSON).build();
 		
 	}
 	
@@ -164,14 +172,15 @@ public class PlacementPal
 
 		
 		JsonObject finalStruct = Json.createObjectBuilder()
-						.add("overallRating", r1)
-						.add("ratingDescription", r2)
-						.add("cultureAndValuesRating", r3)
-						.add("seniorLeadershipRating", r4)
-						.add("compensationAndBenefitsRating", r5)
-						.add("careerOpportunitiesRating", r6)
-						.add("workLifeBalanceRating", r7)
-						.add("recommendToFriendRating", r8)
+						.add("ratings", Json.createObjectBuilder()								
+							.add("overallRating", r1)
+							.add("ratingDescription", r2)
+							.add("cultureAndValuesRating", r3)
+							.add("seniorLeadershipRating", r4)
+							.add("compensationAndBenefitsRating", r5)
+							.add("careerOpportunitiesRating", r6)
+							.add("workLifeBalanceRating", r7)
+							.add("recommendToFriendRating", r8))							
 						.add("featuredReview", Json.createObjectBuilder()
 							.add("location", loc)
 							.add("pros", pros)
