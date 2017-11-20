@@ -4,14 +4,20 @@ import java.io.StringReader;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Future;
 
 import javax.json.Json;
 import javax.json.JsonArrayBuilder;
 import javax.json.JsonBuilderFactory;
 import javax.json.JsonObject;
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.ClientBuilder;
+import javax.ws.rs.client.Entity;
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.Form;
 import javax.ws.rs.core.MediaType;
-import com.sun.jersey.api.client.Client;
-import com.sun.jersey.api.representation.Form;
+import javax.ws.rs.core.Response;
+
 
 
 public class DatabaseClient {
@@ -19,103 +25,87 @@ public class DatabaseClient {
 	private String baseURL;
 	private String tokenID;
 	public DatabaseClient(String url, String username, String password) {
-		this.client = Client.create();	
+		this.client = ClientBuilder.newClient();	
 		this.baseURL = url;
 		Form loginForm = new Form();
-		loginForm.add("user_name", username); 
-		loginForm.add("password", password);
-		loginForm.add("inputFormat", "FORM_URLENCODED");
-		loginForm.add("outputFormat", "json");
-		String response = this.client.resource(this.baseURL + "/login/")
-									 .type(MediaType.APPLICATION_FORM_URLENCODED)
-									 .accept(MediaType.APPLICATION_JSON)
-									 .post(String.class, loginForm);
+		loginForm.param("user_name", username); 
+		loginForm.param("password", password);
+		String response = this.client.target(this.baseURL + "/login/")
+				                     .request(MediaType.APPLICATION_JSON)
+				                     .post(Entity.entity(loginForm, MediaType.APPLICATION_FORM_URLENCODED_TYPE), String.class);
 		JsonObject jsonResponse = Json.createReader(new StringReader(response)).readObject();
-		/* TODO:
-		 * Handle responses of status codes 401, 404, and 500. 
-		 * Optimism lives loudly within me. 
-		 */		
 		this.tokenID = jsonResponse.getString("token");
 	}
 	
-	public JsonObject insert(String tableName, List<Map<String, Object>> rows) {		
+	public Future<Response> insert(String tableName, List<Map<String, Object>> rows) {		
 		JsonBuilderFactory jsonBuilderFactory = Json.createBuilderFactory(null);
 		JsonArrayBuilder jsonArrayBuilder = jsonBuilderFactory.createArrayBuilder();
 		for(Map<String, Object> row: rows) {
 			jsonArrayBuilder.add(jsonBuilderFactory.createObjectBuilder(row));
 		}
 		Form insertForm = new Form();
-		insertForm.add("token", this.tokenID);		
-		insertForm.add("data", jsonArrayBuilder.build());
-		String response = this.client.resource(this.baseURL + "/table/insert/" + tableName)
-									 .type(MediaType.APPLICATION_FORM_URLENCODED)
-									 .accept(MediaType.APPLICATION_JSON)
-									 .post(String.class, insertForm);
-		return Json.createReader(new StringReader(response)).readObject();
+		insertForm.param("token", this.tokenID);		
+		insertForm.param("data", jsonArrayBuilder.build().toString());
+		return this.client.target(this.baseURL + "/table/insert/" + tableName)
+			              .request(MediaType.APPLICATION_JSON)
+			              .async().post(Entity.entity(insertForm, MediaType.APPLICATION_FORM_URLENCODED_TYPE));
 	}
 	
-	public JsonObject select(String tableName, List<String> columns, Optional<String> whereClause) {
-		String queryString = "token="      + this.tokenID + "&" +
-							 "table_name=" + tableName + "&" + 							 
-				             "columns="    + String.join(",", columns);
-		
+	public Future<Response> select(List<String> tables, List<String> columns, Optional<String> whereClause, Optional<Integer> limit) {
+		WebTarget target = client.target(this.baseURL + "/select?")
+								 .queryParam("token", this.tokenID)
+								 .queryParam("table_name", String.join(",", tables))
+								 .queryParam("columns", String.join(",", columns));
 		if(whereClause.isPresent()) {
-			queryString += ("&where=" + whereClause.get());
-		}
-		String response = this.client.resource(this.baseURL + "/select?" + queryString)
-				                     .accept(MediaType.APPLICATION_JSON)
-				                     .get(String.class);
-		return Json.createReader(new StringReader(response)).readObject();
-		
+			target.queryParam("where", whereClause.get());
+		}	
+		if(limit.isPresent())
+			target.queryParam("limit",limit.get());
+		return target.request(MediaType.APPLICATION_JSON)
+					 .async().get();		
 	}
 	
-	public JsonObject update(String tableName, Map<String, Object> setClause, Optional<Map<String, Object>> whereClause) {
+	public Future<Response> update(String tableName, Map<String, Object> setClause, Optional<Map<String, Object>> whereClause) {
 		String setClauseString = setClause.entrySet().stream()
                 .map(keyValuePair -> keyValuePair.getKey() + "=" + keyValuePair.getValue().toString())
                 .reduce((first, second) -> first + " AND " + second)
                 .orElse("");  
 		Form updateForm = new Form();
-		updateForm.add("token", this.tokenID);
-		updateForm.add("set", setClauseString);
+		updateForm.param("token", this.tokenID);
+		updateForm.param("set", setClauseString);
 		if(whereClause.isPresent()) {
 			String whereClauseString = whereClause.get().entrySet().stream()
 					                                    .map(keyValuePair -> keyValuePair.getKey() + "=" + keyValuePair.getValue().toString())
 					                                    .reduce((first, second) -> first + " AND " + second)
 					                                    .orElse("");                                
-			updateForm.add("where", whereClauseString);	   
-		}
-		String response = this.client.resource(this.baseURL + "/delete/" + tableName)
-				.type(MediaType.APPLICATION_FORM_URLENCODED)
-                .accept(MediaType.APPLICATION_JSON)
-                .put(String.class, updateForm);
-		return Json.createReader(new StringReader(response)).readObject();
+			updateForm.param("where", whereClauseString);	   
+		}		
+		return this.client.target(this.baseURL + "/delete/" + tableName)
+				          .request(MediaType.APPLICATION_JSON)
+				          .async().put(Entity.entity(updateForm, MediaType.APPLICATION_FORM_URLENCODED_TYPE));
 	} 
 	
-	public JsonObject delete(String tableName, Optional<Map<String, Object>> whereClause) {
+	public Future<Response> delete(String tableName, Optional<Map<String, Object>> whereClause) {
 		Form deleteForm = new Form();
-		deleteForm.add("token",	this.tokenID);
+		deleteForm.param("token", this.tokenID);
 		if(whereClause.isPresent()) {
 			String whereClauseString = whereClause.get().entrySet().stream()
 					                                    .map(keyValuePair -> keyValuePair.getKey() + "=" + keyValuePair.getValue().toString())
 					                                    .reduce((first, second) -> first + " AND " + second)
 					                                    .orElse("");                                
-			deleteForm.add("where", whereClauseString);	   
+			deleteForm.param("where", whereClauseString);	   
 		}
-		String response = this.client.resource(this.baseURL + "/delete/" + tableName)
-									 .type(MediaType.APPLICATION_FORM_URLENCODED)
-				                     .accept(MediaType.APPLICATION_JSON)
-				                     .delete(String.class, deleteForm);
-		return Json.createReader(new StringReader(response)).readObject();		
+		return this.client.target(this.baseURL + "/delete/" + tableName)
+				          .request(MediaType.APPLICATION_JSON)
+				          .async().method("DELETE", Entity.entity(deleteForm, MediaType.APPLICATION_FORM_URLENCODED_TYPE));
 	} 
 	
-	public JsonObject dropTable(String tableName) {
+	public Future<Response> dropTable(String tableName) {
 		Form dropTableForm = new Form();
-		dropTableForm.add("token", this.tokenID);
-		String response = this.client.resource(this.baseURL + "/drop/" + tableName)
-									 .type(MediaType.APPLICATION_FORM_URLENCODED)
-				                     .accept(MediaType.APPLICATION_JSON)
-				                     .delete(String.class, dropTableForm);
-		return Json.createReader(new StringReader(response)).readObject();
+		dropTableForm.param("token", this.tokenID);
+		return this.client.target(this.baseURL + "/drop/" + tableName)
+		           .request(MediaType.APPLICATION_JSON)
+		           .async().method("DELETE", Entity.entity(dropTableForm, MediaType.APPLICATION_FORM_URLENCODED_TYPE));
 	}
 
 }
